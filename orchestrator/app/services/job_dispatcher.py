@@ -8,10 +8,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from accfarm_shared.db_models import Account, Job, Device, Session
 from accfarm_shared.enums import AccountStatus, JobKind, JobStatus
-from accfarm_shared.models import JobCreate, JobResponse
+from accfarm_shared.models import Job as JobResponse
 from ..policy.warmup import build_warmup_plan
 from ..policy.posting import POSTING_WINDOWS
-from ..policy.limits import DailyLimits
+from ..policy.limits import get_limits_for_status
 
 logger = structlog.get_logger()
 
@@ -84,7 +84,7 @@ class JobDispatcher:
         # 3. Check daily limits
         if kind in (JobKind.WARMUP_SESSION, JobKind.ACTIVE_ENGAGEMENT, JobKind.POST_CONTENT):
             today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-            limits = DailyLimits.for_status(account.status)
+            limits = get_limits_for_status(account.status.value, account.warmup_day if account.status == AccountStatus.WARMING else None)
             
             stmt = select(func.count(Job.id)).where(
                 Job.account_id == account_id,
@@ -95,19 +95,21 @@ class JobDispatcher:
             result = await self.db.execute(stmt)
             count_today = result.scalar_one() or 0
             
-            if count_today >= limits.max_sessions_per_day:
+            if count_today >= limits.sessions_per_day:
                 raise DailyLimitExceededError(
-                    f"Daily limit of {limits.max_sessions_per_day} sessions exceeded for account {account.username}"
+                    f"Daily limit of {limits.sessions_per_day} sessions exceeded for account {account.username}"
                 )
         
         # 4. Auto-fill scheduled_for if POST_CONTENT
         if job_kind == JobKind.POST_CONTENT and not scheduled_for:
             now = datetime.now(timezone.utc)
-            window = POSTING_WINDOWS[account.status] if account.status in POSTING_WINDOWS else POSTING_WINDOWS[AccountStatus.ACTIVE]
-            # Pick a random time within the posting window
+            # Map AccountStatus to niche for posting window lookup
+            # In production, this would use the account's actual niche
+            window_options = [(9, 11), (14, 16), (19, 21)]  # default windows
             import random
-            hour_offset = random.randint(window[0], window[1])
-            scheduled_for = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=hour_offset)
+            window = random.choice(window_options)
+            hour_offset = random.randint(window[0], window[1] - 1)
+            scheduled_for = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=max(0, hour_offset - now.hour))
         
         # 5. Create Job row
         job = Job(
