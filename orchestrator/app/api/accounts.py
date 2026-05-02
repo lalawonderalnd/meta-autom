@@ -5,9 +5,11 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from accfarm_shared.db_models import Account, Device, Client, Session, Action
+from accfarm_shared.enums import AccountStatus
 from ..deps import CurrentUser, DbSession
 
 router = APIRouter()
@@ -62,16 +64,78 @@ async def list_accounts(
     page_size: int = Query(20, ge=1, le=100),
 ) -> AccountListResponse:
     """List accounts with optional filters."""
-    # TODO: Implement full query with filters
-    # For now, return empty placeholder
-    return AccountListResponse(items=[], total=0, page=page, page_size=page_size)
+    # Build query
+    stmt = select(Account)
+    
+    # Apply filters
+    if status_filter:
+        try:
+            status_enum = AccountStatus(status_filter.upper())
+            stmt = stmt.where(Account.status == status_enum)
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Invalid status: {status_filter}")
+    
+    if device_id:
+        stmt = stmt.where(Account.device_id == device_id)
+    
+    if client_id:
+        stmt = stmt.where(Account.client_id == client_id)
+    
+    if search:
+        stmt = stmt.where(
+            or_(
+                Account.username.ilike(f"%{search}%"),
+                Account.package_name.ilike(f"%{search}%"),
+            )
+        )
+    
+    # Get total count
+    count_stmt = select(func.count()).select_from(stmt.subquery())
+    total_result = await db.execute(count_stmt)
+    total = total_result.scalar_one()
+    
+    # Apply pagination
+    offset = (page - 1) * page_size
+    stmt = stmt.offset(offset).limit(page_size)
+    
+    result = await db.execute(stmt)
+    accounts = result.scalars().all()
+    
+    items = [
+        {
+            "id": str(acc.id),
+            "username": acc.username,
+            "status": acc.status.value,
+            "device_id": str(acc.device_id) if acc.device_id else None,
+            "client_id": str(acc.client_id) if acc.client_id else None,
+            "warmup_day": acc.warmup_day,
+            "health_score": acc.health_score,
+            "created_at": acc.created_at.isoformat(),
+        }
+        for acc in accounts
+    ]
+    
+    return AccountListResponse(items=items, total=total, page=page, page_size=page_size)
 
 
 @router.get("/{account_id}", response_model=AccountDetailResponse)
 async def get_account(db: DbSession, current_user: CurrentUser, account_id: UUID) -> AccountDetailResponse:
     """Get account by ID."""
-    # TODO: Implement
-    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
+    result = await db.execute(select(Account).where(Account.id == account_id))
+    account = result.scalar_one_or_none()
+    
+    if not account:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
+    
+    return AccountDetailResponse(
+        id=str(account.id),
+        username=account.username,
+        status=account.status.value,
+        device_id=str(account.device_id) if account.device_id else None,
+        client_id=str(account.client_id) if account.client_id else None,
+        created_at=account.created_at.isoformat(),
+        updated_at=account.updated_at.isoformat(),
+    )
 
 
 @router.patch("/{account_id}")
@@ -82,8 +146,22 @@ async def update_account(
     updates: dict[str, Any],
 ) -> dict[str, Any]:
     """Update account notes, client_id, etc."""
-    # TODO: Implement
-    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
+    result = await db.execute(select(Account).where(Account.id == account_id))
+    account = result.scalar_one_or_none()
+    
+    if not account:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
+    
+    # Allowed fields for update
+    allowed_fields = {"client_id", "bio", "display_name", "profile_picture_url"}
+    
+    for field, value in updates.items():
+        if field in allowed_fields and hasattr(account, field):
+            setattr(account, field, value)
+    
+    await db.flush()
+    
+    return {"status": "updated", "id": str(account.id)}
 
 
 @router.post("/{account_id}/jobs")
@@ -94,7 +172,6 @@ async def create_job_for_account(
     request: CreateJobRequest,
 ) -> dict[str, Any]:
     """Queue a job for this account."""
-    # TODO: Implement via JobDispatcher
     from ..services.job_dispatcher import JobDispatcher
 
     dispatcher = JobDispatcher(db)
@@ -106,7 +183,7 @@ async def create_job_for_account(
             priority=request.priority,
             scheduled_for=request.scheduled_for,
         )
-        return {"id": str(job.id), "status": "queued"}
+        return {"id": job["id"], "status": "queued"}
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
@@ -119,7 +196,6 @@ async def transition_account(
     request: TransitionRequest,
 ) -> dict[str, Any]:
     """Manual state transition (operator override)."""
-    # TODO: Implement via AccountStateMachine
     from ..state.machine import AccountStateMachine
 
     state_machine = AccountStateMachine(db, account_id)
@@ -143,8 +219,34 @@ async def list_account_sessions(
     page_size: int = Query(20, ge=1, le=100),
 ) -> dict[str, Any]:
     """Get past sessions for an account."""
-    # TODO: Implement
-    return {"items": [], "total": 0, "page": page, "page_size": page_size}
+    from sqlalchemy import select
+    
+    stmt = select(Session).where(Session.account_id == account_id).order_by(Session.started_at.desc())
+    
+    offset = (page - 1) * page_size
+    stmt = stmt.offset(offset).limit(page_size)
+    
+    result = await db.execute(stmt)
+    sessions = result.scalars().all()
+    
+    # Get total count
+    count_stmt = select(func.count()).select_from(select(Session.id).where(Session.account_id == account_id).subquery())
+    total_result = await db.execute(count_stmt)
+    total = total_result.scalar_one()
+    
+    items = [
+        {
+            "id": str(sess.id),
+            "started_at": sess.started_at.isoformat(),
+            "ended_at": sess.ended_at.isoformat() if sess.ended_at else None,
+            "duration_seconds": sess.duration_seconds,
+            "actions_summary": sess.actions_summary,
+            "ended_reason": sess.ended_reason,
+        }
+        for sess in sessions
+    ]
+    
+    return {"items": items, "total": total, "page": page, "page_size": page_size}
 
 
 @router.get("/{account_id}/actions")
@@ -156,8 +258,40 @@ async def list_account_actions(
     page_size: int = Query(20, ge=1, le=100),
 ) -> dict[str, Any]:
     """Get past actions for an account, paginated."""
-    # TODO: Implement
-    return {"items": [], "total": 0, "page": page, "page_size": page_size}
+    from sqlalchemy import select, join
+    
+    # Join actions with sessions to filter by account
+    stmt = (
+        select(Action)
+        .join(Session, Action.session_id == Session.id)
+        .where(Session.account_id == account_id)
+        .order_by(Action.occurred_at.desc())
+    )
+    
+    offset = (page - 1) * page_size
+    stmt = stmt.offset(offset).limit(page_size)
+    
+    result = await db.execute(stmt)
+    actions = result.scalars().all()
+    
+    # Get total count
+    count_stmt = select(func.count(Action.id)).join(Session, Action.session_id == Session.id).where(Session.account_id == account_id)
+    total_result = await db.execute(count_stmt)
+    total = total_result.scalar_one()
+    
+    items = [
+        {
+            "id": str(act.id),
+            "kind": act.kind,
+            "target": act.target,
+            "success": act.success,
+            "duration_ms": act.duration_ms,
+            "occurred_at": act.occurred_at.isoformat(),
+        }
+        for act in actions
+    ]
+    
+    return {"items": items, "total": total, "page": page, "page_size": page_size}
 
 
 @router.delete("/{account_id}")
@@ -167,7 +301,6 @@ async def remove_account(
     account_id: UUID,
 ) -> dict[str, Any]:
     """Soft-remove an account (sets status=REMOVED)."""
-    # TODO: Implement via AccountStateMachine
     from ..state.machine import AccountStateMachine
 
     state_machine = AccountStateMachine(db, account_id)
