@@ -1,0 +1,49 @@
+[project]
+name = "accfarm-instagram-bot"
+version = "0.1.0"
+description = "AccFarm v2 Instagram Bot Layer - Humanized IG automation for fleet operation"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "accfarm-device",
+    "accfarm-shared",
+    "pydantic>=2.0.0",
+    "structlog>=24.0.0",
+    "anyio>=4.0.0",
+    "opencv-python>=4.9.0",
+    "paddleocr>=2.7.0",
+    "pillow>=10.0.0",
+    "numpy>=1.26.0",
+    "tenacity>=8.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-cov>=4.0.0",
+    "ruff>=0.4.0",
+    "mypy>=1.10.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+
+[tool.pytest.ini_options]
+markers = [
+    "integration: marks tests that require a real connected phone",
+]
+asyncio_mode = "auto"
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+ignore_missing_imports = true
