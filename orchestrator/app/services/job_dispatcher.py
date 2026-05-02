@@ -168,6 +168,21 @@ class JobDispatcher:
 
         return jobs
 
+    async def cancel_job(self, job_id: UUID) -> bool:
+        """Cancel a single QUEUED job."""
+        result = await self.db.execute(select(Job).where(Job.id == job_id))
+        job = result.scalar_one_or_none()
+        
+        if not job or job.status not in [JobStatus.QUEUED, JobStatus.RUNNING]:
+            return False
+        
+        job.status = JobStatus.CANCELLED
+        job.error_message = "Cancelled by user request"
+        await self.db.flush()
+        
+        logger.info("job_cancelled", job_id=str(job_id))
+        return True
+    
     async def cancel_all_for_device(self, device_id: UUID) -> int:
         """Cancel all QUEUED/RUNNING jobs for a device."""
         stmt = select(Job).where(
