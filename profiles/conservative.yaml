@@ -1,0 +1,72 @@
+name: conservative
+description: Maximum safety profile for high-value accounts
+version: "1.0"
+
+warmup:
+  enabled: true
+  duration_days: 14
+  daily_actions_min: 3
+  daily_actions_max: 8
+  like_ratio: 0.7
+  comment_ratio: 0.05
+  follow_ratio: 0.05
+  browse_ratio: 0.2
+  randomize_order: true
+  rest_days_per_week: 2
+
+proxy:
+  provider: iproyal
+  type: mobile_residential
+  sticky_session: true
+  rotation_interval_hours: 720
+  retry_on_failure: true
+  max_retries: 3
+  timeout_seconds: 30
+  countries:
+    - us
+    - uk
+    - de
+
+device:
+  max_clones_per_device: 5
+  heartbeat_interval_seconds: 60
+  screen_timeout_minutes: 30
+  charging_required: true
+  max_temperature_celsius: 45
+  auto_reboot_on_error: true
+  wifi_sleep_policy: never
+
+account:
+  sessions_per_day_min: 1
+  sessions_per_day_max: 3
+  session_duration_minutes_min: 3
+  session_duration_minutes_max: 10
+  actions_per_session_min: 5
+  actions_per_session_max: 15
+  humanize_touch: true
+  randomize_timing: true
+  avoid_ban_patterns: true
+
+alert:
+  telegram_enabled: true
+  telegram_chat_id: null
+  alert_on_device_offline: true
+  alert_on_account_banned: true
+  alert_on_high_error_rate: true
+  error_rate_threshold: 0.2
+  daily_report_enabled: true
+  daily_report_hour: 9
+
+target_accounts: 25
+accounts_per_device: 5
+growth_rate_per_week: 5
+
+target_creators: []
+content_categories:
+  - lifestyle
+  - travel
+  - food
+
+panic_mode_enabled: true
+auto_heal_enabled: true
+analytics_enabled: true
