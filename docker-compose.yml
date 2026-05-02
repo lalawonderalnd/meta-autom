@@ -1,0 +1,178 @@
+# Meta Autom Farm - Full Stack Docker Compose
+# Run with: docker compose up -d
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: accfarm-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: accfarm
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - accfarm-network
+
+  # Redis for Celery and caching
+  redis:
+    image: redis:7-alpine
+    container_name: accfarm-redis
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - accfarm-network
+
+  # Orchestrator API
+  orchestrator:
+    build:
+      context: ./orchestrator
+      dockerfile: Dockerfile
+    container_name: accfarm-orchestrator
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/accfarm
+      REDIS_URL: redis://redis:6379/0
+      DEBUG: "true"
+      LOG_LEVEL: INFO
+      ORCHESTRATOR_API_KEY: ${ORCHESTRATOR_API_KEY:-dev-api-key-change-in-prod}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_OPS_CHAT_ID: ${TELEGRAM_OPS_CHAT_ID:-}
+      ACCFARM_AES_KEY: ${ACCFARM_AES_KEY:-}
+    volumes:
+      - ./orchestrator:/app
+      - ./shared:/workspace/shared
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - accfarm-network
+
+  # Celery Worker
+  celery-worker:
+    build:
+      context: ./orchestrator
+      dockerfile: Dockerfile
+    container_name: accfarm-celery-worker
+    command: celery -A app.workers.celery_app worker --loglevel=info --concurrency=4
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/accfarm
+      REDIS_URL: redis://redis:6379/0
+      DEBUG: "false"
+      LOG_LEVEL: INFO
+      ORCHESTRATOR_API_KEY: ${ORCHESTRATOR_API_KEY:-dev-api-key-change-in-prod}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_OPS_CHAT_ID: ${TELEGRAM_OPS_CHAT_ID:-}
+      ACCFARM_AES_KEY: ${ACCFARM_AES_KEY:-}
+      DEVICE_LAYER_URL: http://device-layer:8001
+      IG_BOT_URL: http://ig-bot:8002
+    volumes:
+      - ./orchestrator:/app
+      - ./shared:/workspace/shared
+      - ./device_layer:/workspace/device_layer
+      - ./instagram_bot:/workspace/instagram_bot
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - accfarm-network
+
+  # Celery Beat (scheduler)
+  celery-beat:
+    build:
+      context: ./orchestrator
+      dockerfile: Dockerfile
+    container_name: accfarm-celery-beat
+    command: celery -A app.workers.celery_app beat --loglevel=info
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/accfarm
+      REDIS_URL: redis://redis:6379/0
+      DEBUG: "false"
+      LOG_LEVEL: INFO
+    volumes:
+      - ./orchestrator:/app
+      - ./shared:/workspace/shared
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - accfarm-network
+
+  # Device Layer (ADB management)
+  device-layer:
+    build:
+      context: ./device_layer
+      dockerfile: Dockerfile
+    container_name: accfarm-device-layer
+    command: uvicorn accfarm_device.main:app --host 0.0.0.0 --port 8001
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/accfarm
+      DEBUG: "true"
+      LOG_LEVEL: INFO
+    volumes:
+      - ./device_layer:/app
+      - ./shared:/workspace/shared
+      # ADB socket for host ADB access (optional, if running on same host)
+      # - /tmp/adb-*:/tmp/adb-*
+    ports:
+      - "8001:8001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - accfarm-network
+    privileged: true  # Required for ADB USB access if needed
+
+  # Instagram Bot Service
+  ig-bot:
+    build:
+      context: ./instagram_bot
+      dockerfile: Dockerfile
+    container_name: accfarm-ig-bot
+    command: uvicorn accfarm_ig.main:app --host 0.0.0.0 --port 8002
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/accfarm
+      DEBUG: "true"
+      LOG_LEVEL: INFO
+    volumes:
+      - ./instagram_bot:/app
+      - ./shared:/workspace/shared
+    ports:
+      - "8002:8002"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - accfarm-network
+
+networks:
+  accfarm-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
