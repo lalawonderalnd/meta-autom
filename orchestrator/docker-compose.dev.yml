@@ -1,0 +1,47 @@
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/accfarm
+      - REDIS_URL=redis://redis:6379/0
+      - ORCHESTRATOR_API_KEY=dev-api-key-change-in-prod
+      - SUPABASE_URL=http://localhost:54321
+      - SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0
+    depends_on:
+      redis:
+        condition: service_healthy
+    command: uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  worker:
+    build: .
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/accfarm
+      - REDIS_URL=redis://redis:6379/0
+      - ORCHESTRATOR_API_KEY=dev-api-key-change-in-prod
+    depends_on:
+      redis:
+        condition: service_healthy
+    command: celery -A app.workers.celery_app worker --loglevel=INFO
+
+  beat:
+    build: .
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/accfarm
+      - REDIS_URL=redis://redis:6379/0
+      - ORCHESTRATOR_API_KEY=dev-api-key-change-in-prod
+    depends_on:
+      redis:
+        condition: service_healthy
+    command: celery -A app.workers.celery_app beat --loglevel=INFO
