@@ -273,7 +273,7 @@ class Action(Base):
     target: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     success: Mapped[bool] = mapped_column(Boolean, nullable=False)
     duration_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    metadata: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    action_metadata: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, name="metadata")
     occurred_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
