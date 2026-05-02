@@ -1,0 +1,90 @@
+"""Browse hashtag action."""
+
+from __future__ import annotations
+
+import logging
+import time
+from typing import TYPE_CHECKING
+
+from accfarm_ig.actions.base import Action, ActionResult
+
+if TYPE_CHECKING:
+    from accfarm_device.u2_session import U2Session
+    from accfarm_shared.models import Account
+
+logger = logging.getLogger(__name__)
+
+
+class BrowseHashtagAction(Action):
+    """Browse posts under a hashtag."""
+
+    name = "browse_hashtag"
+
+    def __init__(self, session: U2Session, account: Account):
+        super().__init__(session, account)
+        self.posts_viewed = 0
+
+    async def run(
+        self, params: dict, max_count: int, max_duration: int | None
+    ) -> ActionResult:
+        start_time = time.time()
+        self.posts_viewed = 0
+
+        hashtag = params.get("hashtag", "").lstrip("#")
+
+        logger.info(
+            f"Browsing hashtag: #{hashtag}",
+            extra={"account_id": self.account.id},
+        )
+
+        try:
+            from accfarm_ig.ig_app import InstagramApp
+            ig_app = InstagramApp(self.session)
+
+            if not hashtag:
+                return ActionResult(
+                    success=False,
+                    duration_ms=int((time.time() - start_time) * 1000),
+                    action_name=self.name,
+                    error="No hashtag provided",
+                )
+
+            # Search for the hashtag
+            ig_app.navigate_to_explore()
+            self.session.sleep(1.0)
+
+            # Tap search and type hashtag
+            try:
+                search_input = self.session.find(resourceId=ig_app.selectors.search_input)
+                self.session.tap_element(search_input)
+                self.session.sleep(0.5)
+                self.session.type_text(f"#{hashtag}")
+                self.session.sleep(2.0)
+            except Exception as e:
+                logger.warning(f"Could not search hashtag: {e}")
+
+            # Browse the hashtag feed
+            while self.posts_viewed < max_count:
+                elapsed = time.time() - start_time
+                if max_duration and elapsed >= max_duration:
+                    break
+
+                self.session.scroll_feed(direction="up")
+                self.session.sleep(1.5 + time.time() % 1.5)
+                self.posts_viewed += 1
+
+        except Exception as e:
+            logger.error(f"Error browsing hashtag: {e}", exc_info=True)
+            return ActionResult(
+                success=False,
+                duration_ms=int((time.time() - start_time) * 1000),
+                action_name=self.name,
+                error=str(e),
+            )
+
+        return ActionResult(
+            success=True,
+            duration_ms=int((time.time() - start_time) * 1000),
+            action_name=self.name,
+            metadata={"hashtag": hashtag, "posts_viewed": self.posts_viewed},
+        )

@@ -23,10 +23,22 @@ wheels/
 
 # Virtual environments
 venv/
-env/
 ENV/
+env.bak/
 .venv/
-.env/
+
+# Dependencies
+pip-log.txt
+pip-delete-this-directory.txt
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
 
 # IDE
 .vscode/
@@ -41,21 +53,13 @@ Thumbs.db
 # Logs
 *.log
 
-# Coverage
-.coverage
-htmlcov/
-.coverage.*
-
-# Celery
-celerybeat-schedule
-celerybeat.pid
-
 # Environment variables
 .env
 .env.local
-*.env
 *.env.*
 
-# Docker
-.dockerenv
+# Project specific
+instagram_bot/__pycache__/
+instagram_bot/*.pyc
+instagram_bot/*.pyo
 ```
